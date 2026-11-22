@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+  // ESM บน Vercel ต้องมีนามสกุล .js ใน import
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ส่วนนี้เป็นโครงสร้างข้อมูลกลางของระบบ: User เป็นผู้ใช้, Item เป็นของบริจาค,
+// Request เป็นคำขอรับของ และ Category ใช้จัดกลุ่มของในคลัง
+// TODO [DB master]: หากเพิ่ม role/status ต้องตรวจ route, service และ tab ใน frontend ให้ครบ
+enum Role {
+  DONOR
+  RECIPIENT
+  ADMIN
+}
+
+enum Condition {
+  NEW
+  GOOD
+  USED
+}
+
+enum ItemStatus {
+  PENDING_REVIEW
+  AVAILABLE
+  REJECTED
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SHIPPED
+  DELIVERED
+}
+
+// TODO [DB master]: เพิ่ม pickupScheduledAt, pickupAt, pickupLocation และ pickupNote
+// เพื่อรองรับนัดเข้ารับและตรวจสอบวันเข้ารับจริงจากระบบ
+// TODO [DB master]: เพิ่ม imageData/imageMime ใน Item หากเลือกเก็บรูปแบบ local ในฐานข้อมูล
+// TODO [DB master]: เพิ่ม Notification model สำหรับแจ้ง donor เมื่อมีผู้รับจอง/ได้รับพัสดุ
+
+model User {
+  // ผู้ใช้ทุกบทบาทอยู่ในตารางเดียว แล้วแยกสิทธิ์ด้วย Role
+  id           Int       @id @default(autoincrement())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(DONOR)
+  orgName      String?
+  phone        String?
+  createdAt    DateTime  @default(now())
+  items        Item[]
+  requests     Request[]
+  // Back-relation สำหรับแจ้งเตือน
+  notifications Notification[]
+}
+
+model Category {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  items Item[]
+}
+
+model Item {
+  // รายการของบริจาคที่ผู้บริจาคสร้าง และ admin อนุมัติให้แสดงในคลังสาธารณะ
+  id          Int        @id @default(autoincrement())
+  name        String
+  description String
+  imageUrl    String?
+  condition   Condition
+  quantity    Int
+  status      ItemStatus @default(PENDING_REVIEW)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  categoryId  Int
+  category    Category   @relation(fields: [categoryId], references: [id])
+  donorId     Int?
+  donor       User?      @relation(fields: [donorId], references: [id], onDelete: SetNull)
+  requests    Request[]
+  // ส่วนเก็บรูปภาพใน DB
+  imageData Bytes?
+  imageMime String?
+
+  @@index([status])
+}
+
+model Request {
+  // คำขอรับของเชื่อมผู้รับกับรายการบริจาค และเป็นต้นทางของการติดตามสถานะพัสดุ
+  id          Int           @id @default(autoincrement())
+  quantity    Int
+  reason      String
+  status      RequestStatus @default(PENDING)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  itemId      Int
+  item        Item          @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  recipientId Int
+  recipient   User          @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  // ส่วนนัดรับ/จัดส่ง
+  pickupScheduledAt DateTime?
+  pickupAt          DateTime?
+  pickupLocation    String?
+  pickupNote        String?
+
+  // Back-relation สำหรับแจ้งเตือน
+  notifications     Notification[]
+
+  // TODO [Business rule]: unique นี้กันผู้รับคนเดิมขอของชิ้นเดิมซ้ำ
+  // ถ้าต้องขอซ้ำหลัง REJECTED/DELIVERED ให้เปลี่ยนเป็นกติกาใน service แทน unique ถาวร
+  @@unique([itemId, recipientId])
+}
+
+enum NotificationType {
+  REQUEST_CREATED
+  REQUEST_APPROVED
+  REQUEST_SHIPPED
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  requestId Int?
+  type      NotificationType
+  message   String
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  request Request? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+
+  @@index([userId, readAt])
+}

@@ -1,0 +1,15 @@
+import { Router } from "express";
+import { z } from "zod";
+import { requireAuth, requireRole } from "../middlewares/auth.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { prisma } from "../lib/prisma.js";
+import { ItemService } from "../services/itemService.js";
+import { RequestService } from "../services/requestService.js";
+const router = Router(); const items = new ItemService(); const requests = new RequestService();
+router.use(requireAuth, requireRole("ADMIN"));
+router.get("/users", asyncHandler(async (_req, res) => res.json({ data: await prisma.user.findMany({ select: { id: true, name: true, email: true, role: true, orgName: true, phone: true, createdAt: true }, orderBy: { createdAt: "desc" } }) })));
+router.get("/items", asyncHandler(async (req, res) => res.json({ data: await prisma.item.findMany({ where: req.query.status ? { status: String(req.query.status) as never } : {}, include: { category: true, donor: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" } }) })));
+router.patch("/items/:id/review", asyncHandler(async (req, res) => { const body = z.object({ status: z.enum(["AVAILABLE", "REJECTED"]) }).parse(req.body); res.json({ data: await items.review(Number(req.params.id), body.status) }); }));
+router.get("/requests", asyncHandler(async (req, res) => res.json({ data: await requests.adminList(typeof req.query.status === "string" ? req.query.status as never : undefined) })));
+router.patch("/requests/:id/status", asyncHandler(async (req, res) => { const body = z.object({ status: z.enum(["APPROVED", "REJECTED", "SHIPPED"]) }).parse(req.body); res.json({ data: await requests.adminStatus(Number(req.params.id), body.status) }); }));
+export default router;
